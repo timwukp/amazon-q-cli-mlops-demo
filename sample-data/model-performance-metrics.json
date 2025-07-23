@@ -1,0 +1,84 @@
+{
+  "model_name": "healthcare_predictor",
+  "version": "1.0.0",
+  "timestamp": "2025-07-23T08:00:00Z",
+  "metrics": {
+    "accuracy": 0.85,
+    "precision": 0.82,
+    "recall": 0.88,
+    "f1_score": 0.85,
+    "auc_roc": 0.91,
+    "confusion_matrix": {
+      "true_positive": 42,
+      "false_positive": 8,
+      "true_negative": 38,
+      "false_negative": 12
+    }
+  },
+  "performance": {
+    "training_time_seconds": 1800,
+    "inference_latency_ms": 45,
+    "throughput_requests_per_second": 150,
+    "model_size_mb": 12.5,
+    "memory_usage_mb": 256
+  },
+  "cost_metrics": {
+    "training_cost_usd": 15.50,
+    "inference_cost_per_1000_requests": 0.25,
+    "storage_cost_per_month": 2.10,
+    "total_monthly_cost_estimate": 125.75
+  },
+  "data_quality": {
+    "data_drift_score": 0.12,
+    "feature_importance_stability": 0.94,
+    "missing_values_percentage": 0.02,
+    "outliers_percentage": 0.05
+  },
+  "infrastructure": {
+    "instance_type": "ml.m5.large",
+    "cpu_utilization_avg": 65,
+    "memory_utilization_avg": 78,
+    "gpu_utilization_avg": null,
+    "network_io_mbps": 25
+  },
+  "optimization_opportunities": [
+    {
+      "category": "cost",
+      "recommendation": "Switch to Spot instances for training",
+      "potential_savings_percentage": 70,
+      "implementation_effort": "low"
+    },
+    {
+      "category": "performance",
+      "recommendation": "Enable model quantization",
+      "potential_improvement": "30% latency reduction",
+      "implementation_effort": "medium"
+    },
+    {
+      "category": "scalability",
+      "recommendation": "Implement auto-scaling for endpoints",
+      "potential_improvement": "Handle 5x traffic spikes",
+      "implementation_effort": "medium"
+    }
+  ],
+  "alerts": [
+    {
+      "type": "warning",
+      "message": "Data drift detected in feature 'age'",
+      "severity": "medium",
+      "timestamp": "2025-07-23T07:45:00Z"
+    },
+    {
+      "type": "info",
+      "message": "Model performance within acceptable range",
+      "severity": "low",
+      "timestamp": "2025-07-23T08:00:00Z"
+    }
+  ],
+  "compliance": {
+    "data_privacy_compliant": true,
+    "model_explainability_available": true,
+    "audit_trail_complete": true,
+    "bias_testing_completed": true
+  }
+}
