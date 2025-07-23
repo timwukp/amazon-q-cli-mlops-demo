@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Q CLI MLOps Demo Infrastructure - Complete MLOps stack with SageMaker, EMR, and monitoring'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'amazon-q-mlops-demo'
+    Description: 'Name of the project for resource naming'
+  
+  Environment:
+    Type: String
+    Default: 'demo'
+    AllowedValues: ['demo', 'dev', 'staging', 'prod']
+    Description: 'Environment name'
+  
+  S3BucketName:
+    Type: String
+    Description: 'S3 bucket name for ML data and artifacts (must be globally unique)'
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: 'Bucket name must be lowercase, alphanumeric, and hyphens only'
+
+Resources:
+  # S3 Bucket for ML Data and Artifacts
+  MLDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: 'TransitionToIA'
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+          - Id: 'TransitionToGlacier'
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+      NotificationConfiguration:
+        CloudWatchConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            CloudWatchConfiguration:
+              LogGroupName: !Ref MLOpsLogGroup
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for SageMaker
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-sagemaker-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+      Policies:
+        - PolicyName: 'CustomSageMakerPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for EMR
+  EMRServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-emr-service-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticmapreduce.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for EMR EC2 Instances
+  EMRInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-emr-instance-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Instance Profile for EMR
+  EMRInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-${Environment}-emr-instance-profile'
+      Roles:
+        - !Ref EMRInstanceRole
+
+  # CloudWatch Log Group for MLOps
+  MLOpsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/mlops/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Dashboard for MLOps Monitoring
+  MLOpsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-mlops-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/SageMaker", "ModelLatency"],
+                  ["AWS/SageMaker", "ModelInvocations"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "SageMaker Model Performance"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/EMR", "AppsRunning"],
+                  ["AWS/EMR", "AppsPending"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "EMR Application Status"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${MLOpsLogGroup}'\n| fields @timestamp, @message\n| sort @timestamp desc\n| limit 100",
+                "region": "${AWS::Region}",
+                "title": "MLOps Logs"
+              }
+            }
+          ]
+        }
+
+  # SNS Topic for Alerts
+  MLOpsAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-mlops-alerts'
+      DisplayName: 'MLOps Alerts'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Alarm for High Model Latency
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-high-model-latency'
+      AlarmDescription: 'Alert when model latency is high'
+      MetricName: 'ModelLatency'
+      Namespace: 'AWS/SageMaker'
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref MLOpsAlertsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # CloudWatch Alarm for Failed Model Invocations
+  ModelErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-model-errors'
+      AlarmDescription: 'Alert when model invocation errors occur'
+      MetricName: 'ModelInvocation4XXErrors'
+      Namespace: 'AWS/SageMaker'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref MLOpsAlertsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Lambda Function for Cost Optimization
+  CostOptimizationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-cost-optimizer'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt CostOptimizationLambdaRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref MLDataBucket
+          SNS_TOPIC: !Ref MLOpsAlertsTopic
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          
+          def lambda_handler(event, context):
+              """Cost optimization function for MLOps resources."""
+              
+              # Initialize clients
+              sagemaker = boto3.client('sagemaker')
+              emr = boto3.client('emr')
+              sns = boto3.client('sns')
+              
+              recommendations = []
+              
+              try:
+                  # Check for idle SageMaker endpoints
+                  endpoints = sagemaker.list_endpoints()
+                  for endpoint in endpoints['Endpoints']:
+                      if endpoint['EndpointStatus'] == 'InService':
+                          # Check CloudWatch metrics for low utilization
+                          recommendations.append({
+                              'resource': endpoint['EndpointName'],
+                              'type': 'SageMaker Endpoint',
+                              'recommendation': 'Consider scaling down or using auto-scaling',
+                              'potential_savings': 'Up to 50%'
+                          })
+                  
+                  # Check for long-running EMR clusters
+                  clusters = emr.list_clusters(ClusterStates=['RUNNING', 'WAITING'])
+                  for cluster in clusters['Clusters']:
+                      recommendations.append({
+                          'resource': cluster['Name'],
+                          'type': 'EMR Cluster',
+                          'recommendation': 'Consider using EMR Serverless for variable workloads',
+                          'potential_savings': 'Up to 60%'
+                      })
+                  
+                  # Send recommendations via SNS
+                  if recommendations:
+                      message = {
+                          'title': 'MLOps Cost Optimization Recommendations',
+                          'recommendations': recommendations
+                      }
+                      
+                      sns.publish(
+                          TopicArn=os.environ['SNS_TOPIC'],
+                          Message=json.dumps(message, indent=2),
+                          Subject='MLOps Cost Optimization Report'
+                      )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'message': 'Cost optimization analysis completed',
+                          'recommendations_count': len(recommendations)
+                      })
+                  }
+                  
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': str(e)})
+                  }
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for Cost Optimization Lambda
+  CostOptimizationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cost-optimization-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: 'CostOptimizationPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sagemaker:ListEndpoints'
+                  - 'sagemaker:DescribeEndpoint'
+                  - 'emr:ListClusters'
+                  - 'emr:DescribeCluster'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'sns:Publish'
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # EventBridge Rule for Scheduled Cost Optimization
+  CostOptimizationSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-cost-optimization-schedule'
+      Description: 'Trigger cost optimization analysis daily'
+      ScheduleExpression: 'rate(1 day)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CostOptimizationFunction.Arn
+          Id: 'CostOptimizationTarget'
+
+  # Permission for EventBridge to invoke Lambda
+  CostOptimizationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CostOptimizationFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CostOptimizationSchedule.Arn
+
+Outputs:
+  S3BucketName:
+    Description: 'S3 bucket for ML data and artifacts'
+    Value: !Ref MLDataBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-s3-bucket'
+
+  SageMakerExecutionRoleArn:
+    Description: 'SageMaker execution role ARN'
+    Value: !GetAtt SageMakerExecutionRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-sagemaker-role'
+
+  EMRServiceRoleArn:
+    Description: 'EMR service role ARN'
+    Value: !GetAtt EMRServiceRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-emr-service-role'
+
+  EMRInstanceProfileArn:
+    Description: 'EMR instance profile ARN'
+    Value: !GetAtt EMRInstanceProfile.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-emr-instance-profile'
+
+  CloudWatchDashboardURL:
+    Description: 'CloudWatch dashboard URL'
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MLOpsDashboard}'
+
+  SNSTopicArn:
+    Description: 'SNS topic for MLOps alerts'
+    Value: !Ref MLOpsAlertsTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-alerts-topic'
+
+  CostOptimizationFunctionArn:
+    Description: 'Cost optimization Lambda function ARN'
+    Value: !GetAtt CostOptimizationFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-cost-optimizer'
